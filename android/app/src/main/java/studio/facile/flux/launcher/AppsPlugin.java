@@ -1,11 +1,14 @@
 package studio.facile.flux.launcher;
 
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
+import android.net.Uri;
+import android.provider.Settings;
 import android.util.Base64;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -19,7 +22,7 @@ import java.util.List;
 @CapacitorPlugin(name = "Apps")
 public class AppsPlugin extends Plugin {
 
-    private static final int ICON_SIZE = 144;
+    private static final int ICON_SIZE = 96;
 
     @PluginMethod
     public void list(PluginCall call) {
@@ -30,6 +33,7 @@ public class AppsPlugin extends Plugin {
         for (ResolveInfo info : found) {
             JSObject app = new JSObject();
             app.put("packageName", info.activityInfo.packageName);
+            app.put("activityName", info.activityInfo.name);
             app.put("label", info.loadLabel(pm).toString());
             app.put("icon", toDataUrl(info.loadIcon(pm)));
             apps.put(app);
@@ -42,11 +46,30 @@ public class AppsPlugin extends Plugin {
     @PluginMethod
     public void launch(PluginCall call) {
         String packageName = call.getString("packageName");
-        Intent intent = packageName == null ? null : getContext().getPackageManager().getLaunchIntentForPackage(packageName);
-        if (intent == null) {
-            call.reject("No launchable app for " + packageName);
+        String activityName = call.getString("activityName");
+        if (packageName == null || activityName == null) {
+            call.reject("packageName and activityName are required");
             return;
         }
+        Intent intent = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+        intent.setClassName(packageName, activityName);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+        try {
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (ActivityNotFoundException error) {
+            call.reject("No launchable activity " + packageName + "/" + activityName);
+        }
+    }
+
+    @PluginMethod
+    public void openSettings(PluginCall call) {
+        String packageName = call.getString("packageName");
+        if (packageName == null) {
+            call.reject("packageName is required");
+            return;
+        }
+        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null));
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         getContext().startActivity(intent);
         call.resolve();
