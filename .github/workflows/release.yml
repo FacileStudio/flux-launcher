@@ -1,0 +1,79 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: check signing secrets
+        run: |
+          missing=0
+          for v in KEYSTORE_B64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!v}" ]; then
+              echo "::error::secret for $v is empty"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: decode keystore
+        run: |
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/flux-launcher.keystore"
+          test -s "$RUNNER_TEMP/flux-launcher.keystore"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/flux-launcher.keystore" >> "$GITHUB_ENV"
+
+      - name: compute version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          core="${version%%[-+]*}"
+          major="$(echo "$core" | cut -d. -f1)"
+          minor="$(echo "$core" | cut -d. -f2)"
+          patch="$(echo "$core" | cut -d. -f3)"
+          echo "FLUX_LAUNCHER_VERSION_NAME=$version" >> "$GITHUB_ENV"
+          echo "FLUX_LAUNCHER_VERSION_CODE=$((major * 1000000 + minor * 1000 + patch))" >> "$GITHUB_ENV"
+
+      - name: build apk
+        run: |
+          bun install --frozen-lockfile
+          bun run android
+          cd android && ./gradlew assembleRelease --no-daemon
+
+      - name: verify and stage apk
+        run: |
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n1)"
+          "$apksigner" verify --print-certs "$apk"
+          cp "$apk" flux-launcher.apk
+          sha256sum flux-launcher.apk > flux-launcher.apk.sha256
+
+      - name: publish release
+        run: gh release create "$GITHUB_REF_NAME" flux-launcher.apk flux-launcher.apk.sha256 --generate-notes

@@ -1,0 +1,11 @@
+[tasks.dev]
+description = "Run the launcher UI in a browser (shows the empty state)"
+run = "bun run dev"
+
+[tasks.check]
+description = "Type-check, test and build the web app"
+run = "bun run check && bun run test && bun run build"
+
+[tasks.apk]
+description = "Build a debug APK"
+run = "bun run android && cd android && ./gradlew assembleDebug"
